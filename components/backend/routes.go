@@ -90,6 +90,9 @@ func registerRoutes(r *gin.Engine) {
 			projectGroup.GET("/agentic-sessions/:sessionName/agui/history", websocket.HandleAGUIHistory)
 			projectGroup.GET("/agentic-sessions/:sessionName/agui/runs", websocket.HandleAGUIRuns)
 
+			// MCP status endpoint
+			projectGroup.GET("/agentic-sessions/:sessionName/mcp/status", websocket.HandleMCPStatus)
+
 			// Session export
 			projectGroup.GET("/agentic-sessions/:sessionName/export", websocket.HandleExportSession)
 
@@ -117,6 +120,11 @@ func registerRoutes(r *gin.Engine) {
 		api.GET("/auth/github/status", handlers.GetGitHubStatusGlobal)
 		api.POST("/auth/github/disconnect", handlers.DisconnectGitHubGlobal)
 		api.GET("/auth/github/user/callback", handlers.HandleGitHubUserOAuthCallback)
+
+		// Cluster-level Google OAuth (similar to GitHub App pattern)
+		api.POST("/auth/google/connect", handlers.GetGoogleOAuthURLGlobal)
+		api.GET("/auth/google/status", handlers.GetGoogleOAuthStatusGlobal)
+		api.POST("/auth/google/disconnect", handlers.DisconnectGoogleOAuthGlobal)
 
 		// Cluster info endpoint (public, no auth required)
 		api.GET("/cluster-info", handlers.GetClusterInfo)

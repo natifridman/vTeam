@@ -195,6 +195,9 @@ export default function ProjectSessionDetailPage({
   const deleteMutation = useDeleteSession();
   const continueMutation = useContinueSession();
 
+  // Extract phase for sidebar state management
+  const phase = session?.status?.phase || "Pending";
+
   // AG-UI streaming hook - replaces useSessionMessages and useSendChatMessage
   // Note: autoConnect is intentionally false to avoid SSR hydration mismatch
   // Connection is triggered manually in useEffect after client hydration
@@ -1385,8 +1388,8 @@ export default function ProjectSessionDetailPage({
           </div>
         </div>
 
-        {/* Mobile: Options menu button (below header border) - only show when session is running */}
-        {session?.status?.phase === "Running" && (
+        {/* Mobile: Options menu button (below header border) - always show */}
+        {session && (
           <div className="md:hidden px-6 py-1 bg-card border-b">
             <Button
               variant="outline"
@@ -1403,21 +1406,119 @@ export default function ProjectSessionDetailPage({
         <div className="flex-grow overflow-hidden bg-card">
           <div className="h-full">
             <div className="h-full flex gap-6">
-              {/* Mobile sidebar overlay - only show when session is running */}
-              {session?.status?.phase === "Running" && mobileMenuOpen && (
+              {/* Mobile sidebar overlay */}
+              {mobileMenuOpen && (
                 <div 
                   className="fixed inset-0 bg-background/80 backdrop-blur-sm z-40 md:hidden"
                   onClick={() => setMobileMenuOpen(false)}
                 />
               )}
 
-              {/* Left Column - Accordions - only show when session is running */}
-              {session?.status?.phase === "Running" && (
+              {/* Left Column - Accordions - always show with state-based styling */}
+              {session && (
                 <div className={cn(
-                  "flex-[0_0_400px] min-w-[350px] max-w-[500px] flex flex-col sticky top-0 self-start h-[calc(100vh-8rem)] overflow-y-auto pt-6 pl-6 pr-6 bg-card",
+                  "flex-[0_0_400px] min-w-[350px] max-w-[500px] flex flex-col sticky top-0 self-start h-[calc(100vh-8rem)] pt-6 pl-6 pr-6 bg-card relative",
                   "md:flex md:pr-0",
-                  mobileMenuOpen ? "fixed left-0 top-16 z-50 shadow-lg" : "hidden"
+                  mobileMenuOpen ? "fixed left-0 top-16 z-50 shadow-lg" : "hidden",
+                  // Disable interactions when not running
+                  phase !== "Running" && "pointer-events-none"
                 )}>
+                  {/* Backdrop blur layer for entire sidebar */}
+                  {phase !== "Running" && (
+                    <div className={cn(
+                      "absolute inset-0 z-[5] backdrop-blur-[1px]",
+                      ["Creating", "Pending", "Stopping"].includes(phase) && "bg-background/40",
+                      ["Stopped", "Completed", "Failed"].includes(phase) && "bg-background/50 backdrop-blur-[2px]"
+                    )} />
+                  )}
+
+                  {/* State overlay for non-running sessions */}
+                  {phase !== "Running" && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-auto">
+                      <div className="text-center">
+                        {/* Starting states */}
+                        {["Creating", "Pending"].includes(phase) && (
+                          <>
+                            <Loader2 className="h-10 w-10 mx-auto mb-3 animate-spin text-blue-600" />
+                            <h3 className="font-semibold text-lg mb-1">Starting Session</h3>
+                            <p className="text-sm text-muted-foreground">
+                              Setting up your workspace...
+                            </p>
+                          </>
+                        )}
+                        
+                        {/* Stopping state */}
+                        {phase === "Stopping" && (
+                          <>
+                            <Loader2 className="h-10 w-10 mx-auto mb-3 animate-spin text-orange-600" />
+                            <h3 className="font-semibold text-lg mb-1">Stopping Session</h3>
+                            <p className="text-sm text-muted-foreground">
+                              Saving workspace state...
+                            </p>
+                          </>
+                        )}
+                        
+                        {/* Hibernated states */}
+                        {["Stopped", "Completed", "Failed"].includes(phase) && (
+                          <div className="max-w-sm">
+                            <h3 className="font-semibold text-lg mb-4">Session Hibernated</h3>
+                            
+                            {/* Session details */}
+                            <div className="space-y-3 mb-6 text-left">
+                              {workflowManagement.activeWorkflow && (
+                                <div>
+                                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Workflow</p>
+                                  <Badge variant="secondary" className="text-xs">
+                                    {workflowManagement.activeWorkflow}
+                                  </Badge>
+                                </div>
+                              )}
+                              
+                              {session?.spec?.repos && session.spec.repos.length > 0 && (
+                                <div>
+                                  <p className="text-xs font-medium text-muted-foreground mb-1.5">
+                                    Repositories ({session.spec.repos.length})
+                                  </p>
+                                  <div className="text-sm text-foreground/80 space-y-1">
+                                    {session.spec.repos.slice(0, 3).map((repo, idx) => (
+                                      <div key={idx} className="truncate">
+                                        • {repo.url?.split('/').pop()?.replace('.git', '')}
+                                      </div>
+                                    ))}
+                                    {session.spec.repos.length > 3 && (
+                                      <div className="text-xs text-muted-foreground mt-1">
+                                        +{session.spec.repos.length - 3} more
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {(!workflowManagement.activeWorkflow && (!session?.spec?.repos || session.spec.repos.length === 0)) && (
+                                <div className="text-center py-2">
+                                  <p className="text-xs text-muted-foreground">
+                                    No workflow or repositories configured
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                            
+                            <Button onClick={handleContinue} size="lg" className="w-full" disabled={continueMutation.isPending}>
+                              {continueMutation.isPending ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  Resuming...
+                                </>
+                              ) : (
+                                'Resume Session'
+                              )}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                 {/* Mobile close button */}
                 <div className="md:hidden flex justify-end mb-4">
                   <Button
@@ -1429,11 +1530,14 @@ export default function ProjectSessionDetailPage({
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
-                <div className="flex-grow pb-6">
+                <div className={cn(
+                  "flex-grow pb-6",
+                  ["Stopped", "Completed", "Failed"].includes(phase) && "blur-[2px]"
+                )}>
                   <Accordion
                     type="multiple"
                     value={openAccordionItems}
-                    onValueChange={setOpenAccordionItems}
+                    onValueChange={phase === "Running" ? setOpenAccordionItems : undefined}
                     className="w-full space-y-3"
                   >
                     <WorkflowsAccordion
@@ -1476,7 +1580,7 @@ export default function ProjectSessionDetailPage({
                       onNavigateBack={artifactsOps.navigateBack}
                     />
 
-                    <McpIntegrationsAccordion
+                    <McpIntegrationsAccordion 
                       projectName={projectName}
                       sessionName={sessionName}
                     />

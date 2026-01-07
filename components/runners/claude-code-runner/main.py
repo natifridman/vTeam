@@ -101,16 +101,14 @@ async def lifespan(app: FastAPI):
     # This is set by the operator when restarting a stopped/completed/failed session
     is_resume = os.getenv("IS_RESUME", "").strip().lower() == "true"
     if is_resume:
-        logger.info("IS_RESUME=true - this is a resumed session, will skip INITIAL_PROMPT")
+        logger.info("IS_RESUME=true - this is a resumed session")
     
-    # Check for INITIAL_PROMPT and auto-execute (only if not a resume)
+    # INITIAL_PROMPT is no longer auto-executed on startup
+    # User must explicitly send the first message to start the conversation
+    # Workflow greetings are still triggered when a workflow is activated
     initial_prompt = os.getenv("INITIAL_PROMPT", "").strip()
-    if initial_prompt and not is_resume:
-        delay = os.getenv("INITIAL_PROMPT_DELAY_SECONDS", "1")
-        logger.info(f"INITIAL_PROMPT detected ({len(initial_prompt)} chars), will auto-execute after {delay}s delay")
-        asyncio.create_task(auto_execute_initial_prompt(initial_prompt, session_id))
-    elif initial_prompt and is_resume:
-        logger.info("INITIAL_PROMPT detected but IS_RESUME=true - skipping (this is a resume)")
+    if initial_prompt:
+        logger.info(f"INITIAL_PROMPT detected ({len(initial_prompt)} chars) but not auto-executing (user will send first message)")
     
     logger.info(f"AG-UI server ready for session {session_id}")
     
@@ -284,6 +282,71 @@ async def interrupt_run():
     except Exception as e:
         logger.error(f"Interrupt failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/mcp/status")
+async def get_mcp_status():
+    """
+    Returns MCP servers configured for this session.
+    Goes straight to the source - uses adapter's _load_mcp_config() method.
+    
+    Note: Status is "configured" not "connected" - we can't verify runtime state
+    without introspecting the Claude SDK's internal MCP server processes.
+    """
+    try:
+        global adapter
+        
+        if not adapter:
+            return {
+                "servers": [],
+                "totalCount": 0,
+                "message": "Adapter not initialized yet"
+            }
+        
+        mcp_servers_list = []
+        
+        # Get the working directory (same logic as adapter uses)
+        workspace_path = adapter.context.workspace_path if adapter.context else "/workspace"
+        
+        active_workflow_url = os.getenv('ACTIVE_WORKFLOW_GIT_URL', '').strip()
+        cwd_path = workspace_path
+        
+        if active_workflow_url:
+            workflow_name = active_workflow_url.split("/")[-1].removesuffix(".git")
+            workflow_path = os.path.join(workspace_path, "workflows", workflow_name)
+            if os.path.exists(workflow_path):
+                cwd_path = workflow_path
+        
+        # Use adapter's method to load MCP config (same as it does during runs)
+        mcp_config = adapter._load_mcp_config(cwd_path)
+        logger.info(f"MCP config: {mcp_config}")
+        
+        if mcp_config:
+            for server_name, server_config in mcp_config.items():
+                # Check if this is WebFetch (auto-added by adapter)
+                is_webfetch = server_name == "webfetch"
+                
+                mcp_servers_list.append({
+                    "name": server_name,
+                    "displayName": server_name.replace('-', ' ').replace('_', ' ').title(),
+                    "status": "configured",  # Honest: we know it's configured, not if it's actually running
+                    "command": server_config.get("command", ""),
+                    "source": "platform" if is_webfetch else "workflow"
+                })
+        
+        return {
+            "servers": mcp_servers_list,
+            "totalCount": len(mcp_servers_list),
+            "note": "Status shows 'configured' - actual runtime state requires SDK introspection"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get MCP status: {e}", exc_info=True)
+        return {
+            "servers": [],
+            "totalCount": 0,
+            "error": str(e)
+        }
 
 
 async def clone_workflow_at_runtime(git_url: str, branch: str, subpath: str) -> tuple[bool, str]:
