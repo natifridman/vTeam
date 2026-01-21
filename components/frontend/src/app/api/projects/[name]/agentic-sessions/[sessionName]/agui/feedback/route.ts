@@ -1,9 +1,8 @@
 /**
- * AG-UI Run Endpoint Proxy
- * Creates a new agent run and returns metadata immediately.
- * Events are broadcast to GET /agui/events subscribers (middleware pattern).
+ * AG-UI Feedback Endpoint Proxy
+ * Forwards user feedback (thumbs up/down) to backend, which sends to runner for Langfuse logging.
  * 
- * See: https://docs.ag-ui.com/concepts/architecture
+ * See: https://docs.ag-ui.com/drafts/meta-events#user-feedback
  */
 
 import { BACKEND_URL } from '@/lib/config'
@@ -21,7 +20,7 @@ export async function POST(
     const headers = await buildForwardHeadersAsync(request)
     const body = await request.text()
 
-    const backendUrl = `${BACKEND_URL}/projects/${encodeURIComponent(name)}/agentic-sessions/${encodeURIComponent(sessionName)}/agui/run`
+    const backendUrl = `${BACKEND_URL}/projects/${encodeURIComponent(name)}/agentic-sessions/${encodeURIComponent(sessionName)}/agui/feedback`
 
     const resp = await fetch(backendUrl, {
       method: 'POST',
@@ -32,17 +31,15 @@ export async function POST(
       body,
     })
 
-    // Backend returns JSON metadata immediately (not SSE stream)
-    // Events are broadcast to GET /agui/events subscribers
     const data = await resp.text()
     return new Response(data, {
       status: resp.status,
       headers: { 'Content-Type': 'application/json' },
     })
   } catch (error) {
-    console.error('Error starting agent run:', error)
+    console.error('Error submitting feedback:', error)
     return Response.json(
-      { error: 'Failed to start agent run', details: error instanceof Error ? error.message : String(error) },
+      { error: 'Failed to submit feedback', details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     )
   }

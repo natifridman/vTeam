@@ -41,6 +41,7 @@ type UseAGUIStreamOptions = {
   onError?: (error: string) => void
   onConnected?: () => void
   onDisconnected?: () => void
+  onTraceId?: (traceId: string) => void  // Called when Langfuse trace_id is received
 }
 
 type UseAGUIStreamReturn = {
@@ -66,6 +67,7 @@ type UseAGUIStreamReturn = {
     pendingToolCalls: new Map(),  // NEW: tracks ALL in-progress tool calls
     pendingChildren: new Map(),
     error: null,
+    messageFeedback: new Map(),  // Track feedback for messages
   }
 
 export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamReturn {
@@ -81,6 +83,7 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
     onError,
     onConnected,
     onDisconnected,
+    onTraceId,
   } = options
 
   const [state, setState] = useState<AGUIClientState>(initialState)
@@ -523,6 +526,13 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
             return newState
           }
           
+          // Handle Langfuse trace_id for feedback association
+          if (rawData?.type === 'langfuse_trace' && rawData?.traceId) {
+            const traceId = rawData.traceId as string
+            onTraceId?.(traceId)
+            return newState
+          }
+          
           const actualRawData = rawData
           
           // Handle thinking blocks from Claude SDK
@@ -568,6 +578,19 @@ export function useAGUIStream(options: UseAGUIStreamOptions): UseAGUIStreamRetur
             }
             newState.messages = [...newState.messages, msg]
             onMessage?.(msg)
+          }
+          return newState
+        }
+
+        // Handle META events (user feedback: thumbs_up / thumbs_down)
+        if (event.type === AGUIEventType.META) {
+          const metaType = event.metaType
+          const messageId = event.payload?.messageId as string | undefined
+          
+          if (messageId && (metaType === 'thumbs_up' || metaType === 'thumbs_down')) {
+            const feedbackMap = new Map(newState.messageFeedback)
+            feedbackMap.set(messageId, metaType)
+            newState.messageFeedback = feedbackMap
           }
           return newState
         }

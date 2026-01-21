@@ -82,6 +82,7 @@ import {
   useDeleteSession,
   useContinueSession,
   useReposStatus,
+  useCurrentUser,
 } from "@/services/queries";
 import {
   useWorkspaceList,
@@ -93,6 +94,7 @@ import {
 } from "@/services/queries/use-workflows";
 import { useProjectIntegrationStatus } from "@/services/queries/use-projects";
 import { useMutation } from "@tanstack/react-query";
+import { FeedbackProvider } from "@/contexts/FeedbackContext";
 
 // Constants for artifact auto-refresh timing
 // Moved outside component to avoid unnecessary effect re-runs
@@ -187,6 +189,9 @@ export default function ProjectSessionDetailPage({
   // Check integration status
   const { data: integrationStatus } = useProjectIntegrationStatus(projectName);
   const githubConfigured = integrationStatus?.github ?? false;
+  
+  // Get current user for feedback context
+  const { data: currentUser } = useCurrentUser();
 
   // Extract phase for sidebar state management
   const phase = session?.status?.phase || "Pending";
@@ -198,6 +203,9 @@ export default function ProjectSessionDetailPage({
     phase === "Running" // Only poll when session is running
   );
 
+  // Track the current Langfuse trace ID for feedback association
+  const [langfuseTraceId, setLangfuseTraceId] = useState<string | null>(null);
+  
   // AG-UI streaming hook - replaces useSessionMessages and useSendChatMessage
   // Note: autoConnect is intentionally false to avoid SSR hydration mismatch
   // Connection is triggered manually in useEffect after client hydration
@@ -206,6 +214,7 @@ export default function ProjectSessionDetailPage({
     sessionName: sessionName || "",
     autoConnect: false, // Manual connection after hydration
     onError: (err) => console.error("AG-UI stream error:", err),
+    onTraceId: (traceId) => setLangfuseTraceId(traceId),  // Capture Langfuse trace ID for feedback
   });
   const aguiState = aguiStream.state;
   const aguiSendMessage = aguiStream.sendMessage;
@@ -849,6 +858,7 @@ export default function ProjectSessionDetailPage({
       if (msg.role === "user") {
         result.push({
           type: "user_message",
+          id: msg.id,  // Preserve message ID for feedback association
           content: { type: "text_block", text: msg.content || "" },
           timestamp,
         });
@@ -858,6 +868,7 @@ export default function ProjectSessionDetailPage({
         if (metadata?.type === "thinking_block") {
           result.push({
             type: "agent_message",
+            id: msg.id,  // Preserve message ID for feedback association
             content: {
               type: "thinking_block",
               thinking: metadata.thinking as string || "",
@@ -870,6 +881,7 @@ export default function ProjectSessionDetailPage({
           // Only push text message if there's actual content
           result.push({
             type: "agent_message",
+            id: msg.id,  // Preserve message ID for feedback association
             content: { type: "text_block", text: msg.content },
             model: "claude",
             timestamp,
@@ -1982,37 +1994,48 @@ export default function ProjectSessionDetailPage({
                     )}
 
                     <div className="flex flex-col flex-1 overflow-hidden">
-                      <MessagesTab
-                        session={session}
-                        streamMessages={streamMessages}
-                        chatInput={chatInput}
-                        setChatInput={setChatInput}
-                        onSendChat={() => Promise.resolve(sendChat())}
-                        onInterrupt={aguiInterrupt}
-                        onEndSession={() => Promise.resolve(handleEndSession())}
-                        onGoToResults={() => {}}
-                        onContinue={handleContinue}
-                        workflowMetadata={workflowMetadata}
-                        onCommandClick={handleCommandClick}
-                        isRunActive={isRunActive}
-                        showWelcomeExperience={!["Completed", "Failed", "Stopped", "Stopping"].includes(session?.status?.phase || "")}
-                        activeWorkflow={workflowManagement.activeWorkflow}
-                        userHasInteracted={userHasInteracted}
-                        queuedMessages={sessionQueue.messages}
-                        hasRealMessages={hasRealMessages}
-                        welcomeExperienceComponent={
-                          <WelcomeExperience
-                            ootbWorkflows={ootbWorkflows}
-                            onWorkflowSelect={handleWelcomeWorkflowSelect}
-                            onUserInteraction={() => setUserHasInteracted(true)}
-                            userHasInteracted={userHasInteracted}
-                            sessionPhase={session?.status?.phase}
-                            hasRealMessages={hasRealMessages}
-                            onLoadWorkflow={() => setCustomWorkflowDialogOpen(true)}
-                            selectedWorkflow={workflowManagement.selectedWorkflow}
-                          />
-                        }
-                      />
+                      <FeedbackProvider
+                        projectName={projectName}
+                        sessionName={sessionName}
+                        username={currentUser?.username || currentUser?.displayName || "anonymous"}
+                        initialPrompt={session?.spec?.initialPrompt}
+                        activeWorkflow={workflowManagement.activeWorkflow || undefined}
+                        messages={streamMessages}
+                        traceId={langfuseTraceId || undefined}
+                        messageFeedback={aguiState.messageFeedback}
+                      >
+                        <MessagesTab
+                          session={session}
+                          streamMessages={streamMessages}
+                          chatInput={chatInput}
+                          setChatInput={setChatInput}
+                          onSendChat={() => Promise.resolve(sendChat())}
+                          onInterrupt={aguiInterrupt}
+                          onEndSession={() => Promise.resolve(handleEndSession())}
+                          onGoToResults={() => {}}
+                          onContinue={handleContinue}
+                          workflowMetadata={workflowMetadata}
+                          onCommandClick={handleCommandClick}
+                          isRunActive={isRunActive}
+                          showWelcomeExperience={!["Completed", "Failed", "Stopped", "Stopping"].includes(session?.status?.phase || "")}
+                          activeWorkflow={workflowManagement.activeWorkflow}
+                          userHasInteracted={userHasInteracted}
+                          queuedMessages={sessionQueue.messages}
+                          hasRealMessages={hasRealMessages}
+                          welcomeExperienceComponent={
+                            <WelcomeExperience
+                              ootbWorkflows={ootbWorkflows}
+                              onWorkflowSelect={handleWelcomeWorkflowSelect}
+                              onUserInteraction={() => setUserHasInteracted(true)}
+                              userHasInteracted={userHasInteracted}
+                              sessionPhase={session?.status?.phase}
+                              hasRealMessages={hasRealMessages}
+                              onLoadWorkflow={() => setCustomWorkflowDialogOpen(true)}
+                              selectedWorkflow={workflowManagement.selectedWorkflow}
+                            />
+                          }
+                        />
+                      </FeedbackProvider>
                     </div>
                   </CardContent>
                 </Card>
