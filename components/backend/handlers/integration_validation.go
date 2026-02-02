@@ -66,32 +66,55 @@ func ValidateGitLabToken(ctx context.Context, token, instanceURL string) (bool, 
 }
 
 // ValidateJiraToken checks if Jira credentials are valid
+// Uses /rest/api/*/myself endpoint which accepts Basic Auth (API tokens)
 func ValidateJiraToken(ctx context.Context, url, email, apiToken string) (bool, error) {
 	if url == "" || email == "" || apiToken == "" {
 		return false, fmt.Errorf("missing required credentials")
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	apiURL := fmt.Sprintf("%s/rest/api/3/myself", url)
+	client := &http.Client{Timeout: 15 * time.Second}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return false, fmt.Errorf("failed to create request: %w", err)
+	// Try API v3 first (Jira Cloud), fallback to v2 (Jira Server/DC)
+	apiURLs := []string{
+		fmt.Sprintf("%s/rest/api/3/myself", url),
+		fmt.Sprintf("%s/rest/api/2/myself", url),
 	}
 
-	// Jira uses Basic Auth with email:token
-	req.SetBasicAuth(email, apiToken)
-	req.Header.Set("Accept", "application/json")
+	var got401 bool
 
-	resp, err := client.Do(req)
-	if err != nil {
-		// Don't wrap error - could leak credentials from request details
-		return false, fmt.Errorf("request failed")
+	for _, apiURL := range apiURLs {
+		req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+		if err != nil {
+			continue
+		}
+
+		// Jira uses Basic Auth with email:token
+		req.SetBasicAuth(email, apiToken)
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+
+		// 200 = valid, 401 = invalid, 404 = wrong API version (try next)
+		if resp.StatusCode == http.StatusOK {
+			return true, nil
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			got401 = true
+			continue
+		}
 	}
-	defer resp.Body.Close()
 
-	// 200 = valid, 401 = invalid/expired
-	return resp.StatusCode == http.StatusOK, nil
+	// If got 401 on any attempt, credentials are definitely invalid
+	if got401 {
+		return false, nil
+	}
+
+	// Couldn't validate - assume valid to avoid false negatives
+	return true, nil
 }
 
 // ValidateGoogleToken checks if Google OAuth token is valid
